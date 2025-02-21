@@ -27,7 +27,6 @@ impl MySQL {
     }
 
     pub async fn create_table(&self, schema: &Schema, table: &Table) -> Result<()> {
-        println!("todobien");
         let mut params = Vec::new();
         let sql = stmt::sql::Statement::create_table(table)
             .serialize(schema, &mut params)
@@ -58,15 +57,14 @@ impl MySQL {
 
             connection.exec_drop(&sql, ()).await?;
         }
-        println!("todobien");
 
         Ok(())
     }
     pub async fn drop_table(&self, schema: &Schema, table: &Table) -> Result<()> {
-        println!("WHY WHY");
         let mut params = Vec::new();
         let sql = stmt::sql::Statement::drop_table(table)
             .serialize(schema, &mut params)
+            .into_numbered_args()
             .into_inner();
 
         assert!(
@@ -75,8 +73,6 @@ impl MySQL {
         );
 
         let mut conn = self.pool.get_conn().await?;
-        println!("WHY WHY CONECTION!!!");
-        println!("{sql}");
 
         conn.exec_drop(&sql, ()).await?;
 
@@ -105,7 +101,6 @@ impl Driver for MySQL {
         let mut params = Vec::new();
         let sql_as_str = stmt::sql::Serializer::new(schema)
             .serialize_stmt(&sql, &mut params)
-            .to_numbered_args()
             .into_inner();
 
         let mut conn = self.pool.get_conn().await?;
@@ -149,9 +144,8 @@ impl Driver for MySQL {
 
     async fn reset_db(&self, schema: &Schema) -> Result<()> {
         for table in &schema.tables {
-            self.drop_table(schema, table).await?;
+            let _ = self.drop_table(schema, table).await;
 
-            println!("HOASDASD ALE");
             self.create_table(schema, table).await?;
         }
 
