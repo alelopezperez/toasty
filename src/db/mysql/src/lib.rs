@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use mysql_async::prelude::Queryable;
 use mysql_async::prelude::ToValue;
-use mysql_async::Opts;
 use mysql_async::Pool;
 use mysql_async::Row;
 use mysql_common::constants::ColumnType::*;
@@ -12,6 +11,7 @@ use toasty_core::driver::Response;
 use toasty_core::schema::db::Schema;
 use toasty_core::schema::db::Table;
 use toasty_core::stmt;
+use toasty_core::stmt::ValueRecord;
 use toasty_core::Driver;
 use toasty_core::Result;
 
@@ -38,7 +38,7 @@ impl MySQL {
         );
 
         let mut connection = self.pool.get_conn().await?;
-        connection.exec_drop(sql, ()).await?;
+        connection.exec_drop(&sql, ()).await?;
 
         // NOTE: `params` is guaranteed to be empty based on the assertion above. If
         // that changes, `params.clear()` should be called here.
@@ -107,11 +107,10 @@ impl Driver for MySQL {
 
         let stmt = conn.prep(&sql_as_str).await?;
 
-        //TODO maybe sync
         let args = params
             .iter()
             .map(|param| param.to_value())
-            .collect::<Vec<mysql_async::Value>>();
+            .collect::<Vec<_>>();
 
         if width.is_none() {
             let count: Vec<Row> = conn
@@ -119,13 +118,13 @@ impl Driver for MySQL {
                 .await?;
             return Ok(Response::from_count(count.len()));
         }
-        let results: Vec<_> = conn
+        let results = conn
             // TODO: is there way to get an iterator back here instead of collecting the
             // results into a `Vec`?
             .exec(&stmt, &args)
             .await?
             .into_iter()
-            .flat_map(|row: Row| {
+            .map(|row: Row| {
                 let mut results = Vec::new();
 
                 for i in 0..row.len() {
@@ -133,11 +132,10 @@ impl Driver for MySQL {
                     results.push(mysql_to_toasty(i, &row, column));
                 }
 
-                results
-            })
-            .collect();
+                Ok(ValueRecord::from_vec(results))
+            });
 
-        Ok(Response::from_value_stream(stmt::ValueStream::from_vec(
+        Ok(Response::from_value_stream(stmt::ValueStream::from_iter(
             results,
         )))
     }
@@ -188,7 +186,12 @@ fn mysql_to_toasty(i: usize, row: &Row, column: &mysql_async::Column) -> stmt::V
         MYSQL_TYPE_TINY_BLOB => todo!(),
         MYSQL_TYPE_MEDIUM_BLOB => todo!(),
         MYSQL_TYPE_LONG_BLOB => todo!(),
-        MYSQL_TYPE_BLOB => todo!(),
+        MYSQL_TYPE_BLOB => row.get_opt(i).and_then(|val| val.ok()).map_or_else(
+            || stmt::Value::Null,
+            |value| {
+                String::from_utf8(value).map_or_else(|_| stmt::Value::Null, stmt::Value::String)
+            },
+        ),
         MYSQL_TYPE_VAR_STRING => row
             .get(i)
             .map(stmt::Value::String)
